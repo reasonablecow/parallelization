@@ -23,7 +23,7 @@ vector<int> read_graph(char* path)
     ifstream file(path);
     if (file.is_open()){
         while(getline(file,line)){
-            cout << line << '\n';
+            // cout << line << '\n';
             stringstream iss(line);
             int number;
             while(iss >> number){
@@ -55,9 +55,9 @@ vector<pair<pair<int, int>, int>> make_edges(vector<int> graph,
 }
 
 void check_solution(int total,
-                    set<pair<int, int>> edges,
-                    set<int> left,
-                    set<int> right)
+                    set<pair<int, int>> & edges,
+                    set<int> & left,
+                    set<int> & right)
 {
     if (total > get<0>(SOLUTIONS[0])){
         SOLUTIONS.clear();
@@ -69,12 +69,10 @@ void check_solution(int total,
 
 void solve(int index,
            int total,
-           set<pair<int, int>> edges,
-           set<int> left,
-           set<int> right)
+           set<pair<int, int>> & edges,
+           set<int> & left,
+           set<int> & right)
 {
-    cout << ++COUNTER << endl;
-
     if (index < 0) {
         check_solution(total, edges, left, right);
         return;
@@ -82,6 +80,8 @@ void solve(int index,
     if (total + VALUE_LEFT[index] < get<0>(SOLUTIONS[0])) {
         return;
     }
+    COUNTER++;
+    // cout << COUNTER << " Solution count: " << SOLUTIONS.size() << " Total: " << get<0>(SOLUTIONS[0]) << endl;
 
     pair<int, int> edge = EDGES[index].first;
     int v1 = edge.first;
@@ -126,10 +126,10 @@ int main(int argc, char** argv)
     vector<int> graph = read_graph(argv[1]);
     int vertex_count = graph.front();
     graph.erase(graph.begin());
-    cout << "vertex_count: " << vertex_count << " graph: ";
-    for (auto i: graph)
-        cout << i << ' ';
-    cout << endl;
+    // cout << "vertex_count: " << vertex_count << " graph: ";
+    // for (auto i: graph)
+    //     cout << i << ' ';
+    // cout << endl;
 
     EDGES = make_edges(graph, vertex_count);
     // partial_sum(EDGES.begin(), EDGES.end(), VALUE_LEFT.begin(), sum_edges);
@@ -143,6 +143,9 @@ int main(int argc, char** argv)
     set<int> right;
     SOLUTIONS.push_back(make_tuple(0, edges, left, right));
     solve(EDGES.size() - 1, 0, edges, left, right);
-    cout << "Solution count: " << SOLUTIONS.size() << " Total: " << get<0>(SOLUTIONS[0]) << endl;
+    // cout << "Calls: " << COUNTER << " Max weight: " << get<0>(SOLUTIONS[0]) << " Solution count: " << SOLUTIONS.size() << endl;
+    for (auto &solution : SOLUTIONS) {
+        cout << get<0>(solution) << ((&solution != &SOLUTIONS.back())? " ": "\n");
+    }
     return 0;
 }

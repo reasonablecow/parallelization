@@ -18,9 +18,12 @@ def make_edges(graph):
     edges = sorted(edges, key=lambda x: x[1]) # , reverse=True)
     return edges
 
+def is_connected(solution):
+    return True # TODO
+
 def check_solution(solution):
     global solutions
-    if solution is None:
+    if not is_connected(solution):
         return
     elif solution[0] > solutions[0][0]:
         solutions = [solution]
@@ -30,7 +33,6 @@ def check_solution(solution):
 def solve(index, total, edges, left, right):
     global counter
     counter += 1
-    print(counter)
 
     if index < 0:
         check_solution((total, edges, left, right))
@@ -52,7 +54,6 @@ def solve(index, total, edges, left, right):
     solve(index-1, total, edges.copy(), left.copy(), right.copy())
     return
 
-breakpoint()
 GRAPH = read_graph()
 V = int(len(GRAPH) ** (1/2))
 EDGES = make_edges(GRAPH)
@@ -60,4 +61,4 @@ VALUE_LEFT = list(accumulate(element[1] for element in EDGES))
 counter = 0
 solutions = [(0, set(), set(), set())]
 solve(len(EDGES) - 1, 0, set(), {0}, set())
-breakpoint()
+print(*[sol[0] for sol in solutions])
