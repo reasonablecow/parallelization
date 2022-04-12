@@ -2,6 +2,8 @@
 #include <stdlib.h>
 #include <stdbool.h>
 
+#define MAX_PARALLEL_DEPTH 5
+
 typedef struct {
   int value;
   int begin;
@@ -205,15 +207,18 @@ bool is_connected(State *state)
 
 void solve(State *state)
 {
-    if (state->edges[state->idx] != 0 // Edge was added in the previous step.
-        && (MAX == NULL || state->value >= MAX->state.value)
-        && is_connected(state)) {
-
-        if (MAX != NULL && state->value > MAX->state.value) {
-            max_free(MAX);
-            MAX = NULL;
+    #pragma omp critical
+    {
+        if (state->idx > -1
+                && state->edges[state->idx] == 1 // Previous state added an edge.
+                && (MAX == NULL || state->value >= MAX->state.value)
+                && is_connected(state)) {
+            if (MAX != NULL && state->value > MAX->state.value) {
+                max_free(MAX);
+                MAX = NULL;
+            }
+            MAX = max_new(state_copy(state), MAX);
         }
-        MAX = max_new(state_copy(state), MAX);
     }
 
     state->idx++;
@@ -228,32 +233,49 @@ void solve(State *state)
     int vertex_begin = EDGES[state->idx].begin;
     int vertex_end = EDGES[state->idx].end;
 
+    State state_0_1 = state_copy(state);
+    State state_1_0 = state_copy(state);
+    State state_no = state_copy(state);
+    bool worth_fork = state->idx < MAX_PARALLEL_DEPTH;
+
     // add 0-1
     if (state->vertices[vertex_begin] != 1
-        && state->vertices[vertex_end] != 0) {
-        State state_0_1 = state_copy(state);
-        state_0_1.vertices[vertex_begin] = 0;
-        state_0_1.vertices[vertex_end] = 1;
-        state_0_1.edges[state->idx] = 1;
-        state_0_1.value += EDGES[state->idx].value;
-        solve(&state_0_1);
-        state_free(&state_0_1);
+            && state->vertices[vertex_end] != 0) {
+        #pragma omp task if (worth_fork)
+        {
+            state_0_1.vertices[vertex_begin] = 0;
+            state_0_1.vertices[vertex_end] = 1;
+            state_0_1.edges[state->idx] = 1;
+            state_0_1.value += EDGES[state->idx].value;
+            solve(&state_0_1);
+        }
     }
 
     // add 1-0
     if (state->vertices[vertex_begin] != 0
-        && state->vertices[vertex_end] != 1) {
-        State state_1_0 = state_copy(state);
-        state_1_0.vertices[vertex_begin] = 1;
-        state_1_0.vertices[vertex_end] = 0;
-        state_1_0.edges[state->idx] = 1;
-        state_1_0.value += EDGES[state->idx].value;
-        solve(&state_1_0);
-        state_free(&state_1_0);
+            && state->vertices[vertex_end] != 1) {
+        #pragma omp task if (worth_fork)
+        {
+            state_1_0.vertices[vertex_begin] = 1;
+            state_1_0.vertices[vertex_end] = 0;
+            state_1_0.edges[state->idx] = 1;
+            state_1_0.value += EDGES[state->idx].value;
+            solve(&state_1_0);
+        }
     }
 
     // does not add
-    solve(state);
+    #pragma omp task if (worth_fork)
+    {
+        solve(&state_no);
+    }
+
+    #pragma omp taskwait
+    {
+        state_free(&state_0_1);
+        state_free(&state_1_0);
+        state_free(&state_no);
+    }
 }
 
 void clean_up()
@@ -274,7 +296,13 @@ int main(int argc, char **argv)
     if (! is_bipartite()) {
         State state = state_new();
         state.vertices[0] = 0;
-        solve(&state);
+        #pragma omp parallel shared(MAX)
+        {
+            #pragma omp single
+            {
+                solve(&state);
+            }
+        }
         state_free(&state);
     } else {
         printf("bipartite.\n");
