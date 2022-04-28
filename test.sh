@@ -1,5 +1,5 @@
 #!/bin/sh
-# USAGE: ./test.sh ./solver
+# USAGE: ./test.sh "executable solver"
 GRAPHS=(10_3 10_5 10_6 10_7 12_3 12_5 12_6 12_9 15_4 15_5 15_6 15_8)
 # GRAPHS=(10_3 10_5 10_6 10_7 12_3 12_5 12_6 15_4 15_5 15_6)
 for graph in "${GRAPHS[@]}"; do
