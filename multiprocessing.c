@@ -8,10 +8,16 @@
 #define TAG_WORK 1
 #define TAG_TERMINATE 2
 
+int* GRAPH = NULL;
+int VERTEX_COUNT = 0;
+int EDGE_COUNT = 0;
+int* EDGE_INDICES = NULL;
+int* VALUE_LEFT = NULL;
+
 typedef struct {
-  int value;
-  int begin;
-  int end;
+    int value;
+    int begin;
+    int end;
 } Edge;
 int edge_cmp_desc(const void *a, const void *b)
 {
@@ -22,13 +28,7 @@ int edge_cmp_desc(const void *a, const void *b)
     if (edge_a.value > edge_b.value) return -1;
     return 0;
 }
-
-int *GRAPH = NULL;
-int VERTEX_COUNT = 0;
-int EDGE_COUNT = 0;
 Edge* EDGES;
-int* EDGE_INDICES;
-int* VALUE_LEFT;
 
 typedef struct {
     int idx;
@@ -38,12 +38,12 @@ typedef struct {
 } State;
 State state_new()
 {
-    int *vertices = (int *) malloc(VERTEX_COUNT * sizeof(int));
+    int *vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
     for (int i = 0; i < VERTEX_COUNT; i++) vertices[i] = -1;
     return (State) {.idx = -1,
                     .value = 0,
                     .vertices = vertices,
-                    .edges = (int *) calloc(EDGE_COUNT, sizeof(int))};
+                    .edges = calloc(EDGE_COUNT, sizeof(int))};
 }
 void state_free(State *state)
 {
@@ -52,9 +52,9 @@ void state_free(State *state)
 }
 State state_copy(State *state)
 {
-    int *vertices = (int *) malloc(VERTEX_COUNT * sizeof(int));
+    int *vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
     for (int i = 0; i < VERTEX_COUNT; i++) vertices[i] = state->vertices[i];
-    int *edges = (int *) malloc(EDGE_COUNT * sizeof(int));
+    int *edges = malloc(EDGE_COUNT * sizeof(*edges));
     for (int i = 0; i < EDGE_COUNT; i++) edges[i] = state->edges[i];
     return (State) {.idx = state->idx,
                     .value = state->value,
@@ -91,13 +91,13 @@ typedef struct {
 States states_new()
 {
     int cpty = 32;
-    State *arr = (State *) malloc(cpty * sizeof(State));
+    State *arr = malloc(cpty * sizeof(*arr));
     return (States) {.first = 0, .count = 0, .arr=arr, .cpty = cpty};
 }
 void states_add_state(States *states, State *state) {
     if (states->first + states->count == states->cpty) {
         states->cpty *= 2;
-        states->arr = (State *) realloc(states->arr, sizeof(State) * states->cpty);
+        states->arr = realloc(states->arr, states->cpty * sizeof(*states->arr));
     }
     states->arr[states->first + states->count++] = *state;
 }
@@ -156,7 +156,7 @@ typedef struct Max {
 } Max;
 Max *max_new(State state, Max *prev)
 {
-    Max *max = (Max *) malloc(sizeof(Max));
+    Max *max = malloc(sizeof(*max));
     *max = (Max) {.state = state, .prev = prev};
     return max;
 }
@@ -168,14 +168,14 @@ void max_free(Max *max)
         free(max);
     }
 }
-Max *MAX = NULL;
+Max* MAX = NULL;
 
 void graph_read(char *filename)
 {
     FILE *file = fopen(filename, "r");
     fscanf(file, "%d,", &VERTEX_COUNT);
     int size = (VERTEX_COUNT)*(VERTEX_COUNT);
-    GRAPH = (int*) malloc(size * sizeof(int));
+    GRAPH = malloc(size * sizeof(*GRAPH));
     for (int i = 0; i < size; i++) {
         fscanf(file, "%d,", &(GRAPH)[i]);
     }
@@ -205,12 +205,11 @@ void make_edges()
     }
 
     // Make array of edges
-    EDGES = (Edge*) malloc(EDGE_COUNT * sizeof(Edge));
+    EDGES = malloc(EDGE_COUNT * sizeof(*EDGES));
     int edge_idx = -1;
-    int value;
     for (int begin = 0; begin < VERTEX_COUNT; begin++) {
         for (int end = begin + 1; end < VERTEX_COUNT; end++) {
-            value = GRAPH[begin*VERTEX_COUNT + end];
+            int value = GRAPH[begin*VERTEX_COUNT + end];
             if (value > 0) {
                 edge_idx += 1;
                 EDGES[edge_idx] = (Edge) {value, begin, end};
@@ -221,7 +220,7 @@ void make_edges()
     qsort(EDGES, EDGE_COUNT, sizeof(Edge), edge_cmp_desc);
 
     // Create mapping from vertices v1,v2 to EDGES array index
-    EDGE_INDICES = (int*) malloc(VERTEX_COUNT * VERTEX_COUNT * sizeof(int));
+    EDGE_INDICES = malloc(VERTEX_COUNT * VERTEX_COUNT * sizeof(*EDGE_INDICES));
     for (int idx = 0; idx < VERTEX_COUNT*VERTEX_COUNT; idx++) {
         EDGE_INDICES[idx] = -1;
     }
@@ -231,7 +230,7 @@ void make_edges()
     }
 
     // Create value-left array.
-    VALUE_LEFT = (int*) malloc(EDGE_COUNT * sizeof(int));
+    VALUE_LEFT = malloc(EDGE_COUNT * sizeof(*VALUE_LEFT));
     int idx = EDGE_COUNT - 1;
     VALUE_LEFT[idx] = EDGES[idx].value;
     for (idx -= 1; idx >= 0; idx--) {
@@ -241,11 +240,10 @@ void make_edges()
 
 bool is_bipartite_recursive(int vertex, int color, int* visited, int* vertices)
 {
-    int edge_idx;
     visited[vertex] = 1;
     vertices[vertex] = color;
     for (int other = 0; other < VERTEX_COUNT; other++) {
-        edge_idx = EDGE_INDICES[vertex*VERTEX_COUNT + other];
+        int edge_idx = EDGE_INDICES[vertex*VERTEX_COUNT + other];
         if (edge_idx != -1){
             if (vertices[other] == color) {
                 return false;
@@ -262,14 +260,13 @@ bool is_bipartite_recursive(int vertex, int color, int* visited, int* vertices)
 
 bool is_bipartite()
 {
-    bool result;
-    int* visited = (int*) malloc(VERTEX_COUNT * sizeof(int));
-    int* vertices = (int*) malloc(VERTEX_COUNT * sizeof(int));
+    int* visited = malloc(VERTEX_COUNT * sizeof(*visited));
+    int* vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
     for (int idx = 0; idx < VERTEX_COUNT; idx++) {
         visited[idx] = 0;
         vertices[idx] = -1;
     }
-    result = is_bipartite_recursive(0, 0, visited, vertices);
+    bool result = is_bipartite_recursive(0, 0, visited, vertices);
     free(visited);
     free(vertices);
     return result;
@@ -289,7 +286,7 @@ void is_connected_recursive(int vertex, int *edges, int *visited)
 }
 bool is_connected(State *state)
 {
-    int *visited = (int *) calloc(VERTEX_COUNT, sizeof(int));
+    int *visited = calloc(VERTEX_COUNT, sizeof(*visited));
     is_connected_recursive(0, state->edges, visited);
     int visited_count = 0;
     for (int i = 0; i < VERTEX_COUNT; i++) visited_count += visited[i];
@@ -318,7 +315,7 @@ void solve(State *state)
         return;
     }
     if (MAX != NULL
-        && state->value + VALUE_LEFT[state->idx] < MAX->state.value) {
+            && state->value + VALUE_LEFT[state->idx] < MAX->state.value) {
         return;
     }
 
@@ -365,13 +362,51 @@ void solve(State *state)
     }
 }
 
+void send_edges_to_workers()
+{
+    MPI_Send(&VERTEX_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
+    MPI_Send(&EDGE_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
+    for (int i = 0; i < EDGE_COUNT; i++) {
+        size_t length = sizeof(Edge);
+        int pos = 0;
+        char buffer[length];
+        MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+        MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+        MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+        MPI_Send(buffer, pos, MPI_PACKED, 1, TAG_WORK, MPI_COMM_WORLD);
+    }
+    MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
+    MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
+}
+void receive_edges_from_boss()
+{
+    MPI_Status status;
+    MPI_Recv(&VERTEX_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+    MPI_Recv(&EDGE_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+
+    EDGES = malloc(EDGE_COUNT * sizeof(*EDGES));
+    for (int i = 0; i < EDGE_COUNT; i++) {
+        size_t length = sizeof(Edge);
+        int pos = 0;
+        char buffer[length];
+        MPI_Recv(buffer, length, MPI_PACKED, BOSS, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        MPI_Unpack(buffer, length, &pos, &EDGES[i].begin, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Unpack(buffer, length, &pos, &EDGES[i].end, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Unpack(buffer, length, &pos, &EDGES[i].value, 1, MPI_INT, MPI_COMM_WORLD);
+    }
+    EDGE_INDICES = malloc(VERTEX_COUNT * VERTEX_COUNT * sizeof(*EDGE_INDICES));
+    MPI_Recv(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+
+    VALUE_LEFT = malloc(EDGE_COUNT * sizeof(*VALUE_LEFT));
+    MPI_Recv(VALUE_LEFT, EDGE_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+}
+
 void clean_up()
 {
     max_free(MAX);
     free(EDGES);
     free(EDGE_INDICES);
     free(VALUE_LEFT);
-    free(GRAPH);
 }
 
 int main(int argc, char **argv)
@@ -386,21 +421,9 @@ int main(int argc, char **argv)
     if (rank == 0) { // Boss Process
         graph_read(argv[1]);
         make_edges();
+        free(GRAPH);
         if (! is_bipartite()) {
-
-            MPI_Send(&VERTEX_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-            MPI_Send(&EDGE_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-            for (int i = 0; i < EDGE_COUNT; i++) {
-                size_t length = sizeof(Edge);
-                int pos = 0;
-                char buffer[length];
-                MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Send(buffer, pos, MPI_PACKED, 1, TAG_WORK, MPI_COMM_WORLD);
-            }
-            MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-            MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
+            send_edges_to_workers();
 
             State state = state_new();
             state.vertices[0] = 0;
@@ -423,7 +446,6 @@ int main(int argc, char **argv)
 
             MPI_Send(NULL, 0, MPI_PACKED, 1, TAG_TERMINATE, MPI_COMM_WORLD);
 
-
             MPI_Status status;
             int value;
             while (true) {
@@ -445,38 +467,17 @@ int main(int argc, char **argv)
         clean_up();
 
     } else { // Worker Process
-        MPI_Status status;
-
-        MPI_Recv(&VERTEX_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        int *vertices = (int *) malloc(sizeof(int) * VERTEX_COUNT);
-
-        MPI_Recv(&EDGE_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-        int *edges = (int *) malloc(sizeof(int) * EDGE_COUNT);
-        // printf("vertex_count %d, edge_count %d\n", VERTEX_COUNT, EDGE_COUNT);
-
-        EDGES = (Edge *) malloc(sizeof(Edge) * EDGE_COUNT);
-        for (int i = 0; i < EDGE_COUNT; i++) {
-            size_t length = sizeof(Edge);
-            int pos = 0;
-            char buffer[length];
-            MPI_Recv(buffer, length, MPI_PACKED, BOSS, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-            MPI_Unpack(buffer, length, &pos, &EDGES[i].begin, 1, MPI_INT, MPI_COMM_WORLD);
-            MPI_Unpack(buffer, length, &pos, &EDGES[i].end, 1, MPI_INT, MPI_COMM_WORLD);
-            MPI_Unpack(buffer, length, &pos, &EDGES[i].value, 1, MPI_INT, MPI_COMM_WORLD);
-        }
-        EDGE_INDICES = (int*) malloc(VERTEX_COUNT * VERTEX_COUNT * sizeof(int));
-        MPI_Recv(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-
-        VALUE_LEFT = (int*) malloc(EDGE_COUNT * sizeof(int));
-        MPI_Recv(VALUE_LEFT, EDGE_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+        receive_edges_from_boss();
 
         int idx;
         int value;
-        State state;
+        int *vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
+        int *edges = malloc(EDGE_COUNT * sizeof(*edges));
         while (true) {
             size_t length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
             int position = 0;
             char buffer[length];
+            MPI_Status status;
             MPI_Recv(buffer, length, MPI_PACKED, BOSS, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
             if (status.MPI_TAG == TAG_TERMINATE) {
                 break;
@@ -485,26 +486,19 @@ int main(int argc, char **argv)
             MPI_Unpack(buffer, length, &position, &value, 1, MPI_INT, MPI_COMM_WORLD);
             MPI_Unpack(buffer, length, &position, vertices, VERTEX_COUNT, MPI_INT, MPI_COMM_WORLD);
             MPI_Unpack(buffer, length, &position, edges, EDGE_COUNT, MPI_INT, MPI_COMM_WORLD);
-            state = (State) {.idx = idx, .value = value, .vertices = vertices,
-                             .edges = edges};
-            // state_print(&state);
+            State state = {.idx = idx, .value = value, .vertices = vertices,
+                           .edges = edges};
             solve(&state);
-            // for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
-            //     printf("%d%s", ptr->state.value, (ptr->prev != NULL)? " ": "\n");
-            // }
         }
+        free(vertices);
+        free(edges);
+
         for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
             int tag = (ptr->prev != NULL)? TAG_WORK: TAG_TERMINATE;
             MPI_Send(&ptr->state.value, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
         }
 
-        free(vertices);
-        free(edges);
-
-        max_free(MAX);
-        free(EDGES);
-        free(EDGE_INDICES);
-        free(VALUE_LEFT);
+        clean_up();
     }
     MPI_Finalize();
     return EXIT_SUCCESS;
