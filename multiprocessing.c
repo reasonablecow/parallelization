@@ -313,10 +313,10 @@ void is_connected_recursive(int vertex, int *edges, int *visited)
         }
     }
 }
-bool is_connected(State *state)
+bool is_connected(int edges[])
 {
     int *visited = calloc(VERTEX_COUNT, sizeof(*visited));
-    is_connected_recursive(0, state->edges, visited);
+    is_connected_recursive(0, edges, visited);
     int visited_count = 0;
     for (int i = 0; i < VERTEX_COUNT; i++) visited_count += visited[i];
     free(visited);
@@ -330,7 +330,7 @@ void solve(State *state)
         if (state->idx > -1
                 && state->edges[state->idx] == 1 // Previous state added an edge.
                 && (MAX == NULL || state->value >= MAX->state.value)
-                && is_connected(state)) {
+                && is_connected(state->edges)) {
             if (MAX != NULL && state->value > MAX->state.value) {
                 max_free(MAX);
                 MAX = NULL;
@@ -407,10 +407,13 @@ void send_edges_to_workers()
     MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
     MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
 }
-void receive_edges_from_boss()
+bool receive_edges_from_boss()
 {
     MPI_Status status;
     MPI_Recv(&VERTEX_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+    if (status.MPI_TAG == TAG_TERMINATE) {
+        return false;
+    }
     MPI_Recv(&EDGE_COUNT, 1, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
 
     EDGES = malloc(EDGE_COUNT * sizeof(*EDGES));
@@ -428,9 +431,8 @@ void receive_edges_from_boss()
 
     VALUE_LEFT = malloc(EDGE_COUNT * sizeof(*VALUE_LEFT));
     MPI_Recv(VALUE_LEFT, EDGE_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
+    return true;
 }
-
-
 
 void clean_up()
 {
@@ -479,27 +481,34 @@ int main(int argc, char **argv)
                 }
                 printf("%d ", value);
             }
-
+            clean_up();
         } else {
-            printf("bipartite.\n");
             MPI_Send(NULL, 0, MPI_INT, 1, TAG_TERMINATE, MPI_COMM_WORLD);
+            int* edges = malloc(EDGE_COUNT * sizeof(*edges));
+            int max = 0;
+            for (size_t idx = 0; idx < EDGE_COUNT; idx++) {
+                edges[idx] = 1;
+                max += EDGES[idx].value;
+            }
+            printf("%d\n", is_connected(edges)? max: 0);
+            free(edges);
         }
 
     } else { // Worker Process
-        receive_edges_from_boss();
+        if (receive_edges_from_boss()) {
+            State state = state_new();
+            while (state_mpi_recieve(&state)) {
+                solve(&state);
+            }
+            state_free(&state);
 
-        State state = state_new();
-        while (state_mpi_recieve(&state)) {
-            solve(&state);
-        }
-        state_free(&state);
-
-        for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
-            int tag = (ptr->prev != NULL)? TAG_WORK: TAG_TERMINATE;
-            MPI_Send(&ptr->state.value, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+            for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
+                int tag = (ptr->prev != NULL)? TAG_WORK: TAG_TERMINATE;
+                MPI_Send(&ptr->state.value, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
+            }
+            clean_up();
         }
     }
-    clean_up();
     MPI_Finalize();
     return EXIT_SUCCESS;
 }
