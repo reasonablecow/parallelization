@@ -1,5 +1,5 @@
 CC	=	mpicc
-CFLAGS	=
+CFLAGS	=	-Wall -Wextra -pedantic -std=c11
 LIBS	=	-lm
 
 default:	test-all clean
@@ -43,7 +43,7 @@ parallel_data_o3:	parallel_data.c
 	gcc parallel_data.c -fopenmp -O3 -o parallel_data_o3
 
 test-multiprocessing:	multiprocessing
-	./test.sh "mpirun -np 2 multiprocessing"
+	./test.sh "mpirun -np 4 multiprocessing"
 
 multiprocessing:	multiprocessing.c
 	$(CC) $(CFLAGS) -o multiprocessing multiprocessing.c $(LIBS)

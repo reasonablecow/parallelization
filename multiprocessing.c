@@ -8,11 +8,11 @@
 #define TAG_WORK 1
 #define TAG_TERMINATE 2
 
-int* GRAPH = NULL;
+int* GRAPH = 0;
 int VERTEX_COUNT = 0;
 int EDGE_COUNT = 0;
-int* EDGE_INDICES = NULL;
-int* VALUE_LEFT = NULL;
+int* EDGE_INDICES = 0;
+int* VALUE_LEFT = 0;
 
 typedef struct {
     int value;
@@ -191,13 +191,13 @@ Max *max_new(State state, Max *prev)
 }
 void max_free(Max *max)
 {
-    for (Max *prev; max != NULL; max = prev) {
+    for (Max *prev; max; max = prev) {
         prev = max->prev;
         state_free(&max->state);
         free(max);
     }
 }
-Max* MAX = NULL;
+Max* MAX = 0;
 
 void graph_read(char *filename)
 {
@@ -329,11 +329,11 @@ void solve(State *state)
     {
         if (state->idx > -1
                 && state->edges[state->idx] == 1 // Previous state added an edge.
-                && (MAX == NULL || state->value >= MAX->state.value)
+                && (!MAX || state->value >= MAX->state.value)
                 && is_connected(state->edges)) {
-            if (MAX != NULL && state->value > MAX->state.value) {
+            if (MAX && state->value > MAX->state.value) {
                 max_free(MAX);
-                MAX = NULL;
+                MAX = (void*)0;
             }
             MAX = max_new(state_copy(state), MAX);
         }
@@ -343,8 +343,7 @@ void solve(State *state)
     if (state->idx >= EDGE_COUNT) {
         return;
     }
-    if (MAX != NULL
-            && state->value + VALUE_LEFT[state->idx] < MAX->state.value) {
+    if (MAX && ((state->value + VALUE_LEFT[state->idx]) < MAX->state.value)) {
         return;
     }
 
@@ -391,21 +390,25 @@ void solve(State *state)
     }
 }
 
-void send_edges_to_workers()
+void send_edges_to_workers(bool available_processes[], size_t process_count)
 {
-    MPI_Send(&VERTEX_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-    MPI_Send(&EDGE_COUNT, 1, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-    for (int i = 0; i < EDGE_COUNT; i++) {
-        size_t length = sizeof(Edge);
-        int pos = 0;
-        char buffer[length];
-        MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-        MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-        MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-        MPI_Send(buffer, pos, MPI_PACKED, 1, TAG_WORK, MPI_COMM_WORLD);
+    for (size_t process_id = 1; process_id < process_count; process_id++) {
+        if (available_processes[process_id]) {
+            MPI_Send(&VERTEX_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+            MPI_Send(&EDGE_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+            for (int i = 0; i < EDGE_COUNT; i++) {
+                size_t length = sizeof(Edge);
+                int pos = 0;
+                char buffer[length];
+                MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+                MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+                MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+                MPI_Send(buffer, pos, MPI_PACKED, process_id, TAG_WORK, MPI_COMM_WORLD);
+            }
+            MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+            MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+        }
     }
-    MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
-    MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, 1, TAG_WORK, MPI_COMM_WORLD);
 }
 bool receive_edges_from_boss()
 {
@@ -447,7 +450,7 @@ int main(int argc, char **argv)
     if (argc != 2) return EXIT_FAILURE;
     int rank;
     int process_count;
-    MPI_Init(NULL, NULL);
+    MPI_Init((void*)0, (void*)0);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &process_count);
 
@@ -456,7 +459,11 @@ int main(int argc, char **argv)
         make_edges();
         free(GRAPH);
         if (! is_bipartite()) {
-            send_edges_to_workers();
+            bool* available_processes = malloc(process_count * sizeof(*available_processes));
+            for (int idx = 0; idx < process_count; idx++) {
+                available_processes[idx] = true;
+            }
+            send_edges_to_workers(available_processes, process_count);
 
             State state = state_new();
             state.vertices[0] = 0;
@@ -469,7 +476,9 @@ int main(int argc, char **argv)
             }
             free(states.arr);
 
-            MPI_Send(NULL, 0, MPI_PACKED, 1, TAG_TERMINATE, MPI_COMM_WORLD);
+            for (int process_id = 1; process_id < process_count; process_id++) {
+                MPI_Send((void*)0, 0, MPI_PACKED, process_id, TAG_TERMINATE, MPI_COMM_WORLD);
+            }
 
             MPI_Status status;
             int value;
@@ -483,10 +492,10 @@ int main(int argc, char **argv)
             }
             clean_up();
         } else {
-            MPI_Send(NULL, 0, MPI_INT, 1, TAG_TERMINATE, MPI_COMM_WORLD);
+            MPI_Send((void*)0, 0, MPI_INT, 1, TAG_TERMINATE, MPI_COMM_WORLD);
             int* edges = malloc(EDGE_COUNT * sizeof(*edges));
             int max = 0;
-            for (size_t idx = 0; idx < EDGE_COUNT; idx++) {
+            for (int idx = 0; idx < EDGE_COUNT; idx++) {
                 edges[idx] = 1;
                 max += EDGES[idx].value;
             }
@@ -502,8 +511,8 @@ int main(int argc, char **argv)
             }
             state_free(&state);
 
-            for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
-                int tag = (ptr->prev != NULL)? TAG_WORK: TAG_TERMINATE;
+            for (Max *ptr = MAX; ptr; ptr = ptr->prev) {
+                int tag = (ptr->prev)? TAG_WORK: TAG_TERMINATE;
                 MPI_Send(&ptr->state.value, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
             }
             clean_up();
