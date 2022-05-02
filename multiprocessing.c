@@ -6,7 +6,9 @@
 #define MAX_PARALLEL_DEPTH 5
 #define BOSS 0
 #define TAG_WORK 1
-#define TAG_TERMINATE 2
+#define TAG_DONE 2
+#define TAG_TERMINATE 3
+#define FIRST 0
 
 int* GRAPH = 0;
 int VERTEX_COUNT = 0;
@@ -39,7 +41,9 @@ typedef struct {
 State state_new()
 {
     int *vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
-    for (int i = 0; i < VERTEX_COUNT; i++) vertices[i] = -1;
+    for (int i = 0; i < VERTEX_COUNT; i++) {
+        vertices[i] = (i)? -1: FIRST;
+    }
     return (State) {.idx = -1,
                     .value = 0,
                     .vertices = vertices,
@@ -81,34 +85,48 @@ void state_print(State *state)
     }
     printf("};\n");
 }
-bool state_mpi_recieve(State* state)
+bool state_vertices_equals(State* first, State* second)
 {
-    size_t length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
+    for (int idx = 0; idx < VERTEX_COUNT; idx++) {
+        if (first->vertices[idx] != second->vertices[idx]) {
+            return false;
+        }
+    }
+    return true;
+}
+MPI_Status state_mpi_recieve(State* state, int source, int tag)
+{
+    int length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
     int position = 0;
     char buffer[length];
     MPI_Status status;
+    MPI_Recv(buffer, length, MPI_PACKED, source, tag, MPI_COMM_WORLD, &status);
 
-    MPI_Recv(buffer, length, MPI_PACKED, BOSS, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-    if (status.MPI_TAG == TAG_TERMINATE) {
-        return false;
+    int received;
+    MPI_Get_count(&status, MPI_PACKED, &received);
+    if (received >= length) {
+        MPI_Unpack(buffer, length, &position, &state->idx, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Unpack(buffer, length, &position, &state->value, 1, MPI_INT, MPI_COMM_WORLD);
+        MPI_Unpack(buffer, length, &position, state->vertices, VERTEX_COUNT, MPI_INT, MPI_COMM_WORLD);
+        MPI_Unpack(buffer, length, &position, state->edges, EDGE_COUNT, MPI_INT, MPI_COMM_WORLD);
     }
-    MPI_Unpack(buffer, length, &position, &state->idx, 1, MPI_INT, MPI_COMM_WORLD);
-    MPI_Unpack(buffer, length, &position, &state->value, 1, MPI_INT, MPI_COMM_WORLD);
-    MPI_Unpack(buffer, length, &position, state->vertices, VERTEX_COUNT, MPI_INT, MPI_COMM_WORLD);
-    MPI_Unpack(buffer, length, &position, state->edges, EDGE_COUNT, MPI_INT, MPI_COMM_WORLD);
-    return true;
+    return status;
 }
-void state_mpi_send(State* state, int process_id)
+void state_mpi_send(State* state, int destination, int tag)
 {
-    size_t length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
-    int position = 0;
-    char buffer[length];
+    if (state) {
+        size_t length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
+        int position = 0;
+        char buffer[length];
 
-    MPI_Pack(&state->idx, 1, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
-    MPI_Pack(&state->value, 1, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
-    MPI_Pack(state->vertices, VERTEX_COUNT, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
-    MPI_Pack(state->edges, EDGE_COUNT, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
-    MPI_Send(buffer, position, MPI_PACKED, process_id, TAG_WORK, MPI_COMM_WORLD);
+        MPI_Pack(&state->idx, 1, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
+        MPI_Pack(&state->value, 1, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
+        MPI_Pack(state->vertices, VERTEX_COUNT, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
+        MPI_Pack(state->edges, EDGE_COUNT, MPI_INT, buffer, length, &position, MPI_COMM_WORLD);
+        MPI_Send(buffer, position, MPI_PACKED, destination, tag, MPI_COMM_WORLD);
+    } else {
+        MPI_Send((void*)0, 0, MPI_PACKED, destination, tag, MPI_COMM_WORLD);
+    }
 }
 
 typedef struct {
@@ -183,7 +201,7 @@ typedef struct Max {
     State state;
     struct Max *prev;
 } Max;
-Max *max_new(State state, Max *prev)
+Max* max_new(State state, Max *prev)
 {
     Max *max = malloc(sizeof(*max));
     *max = (Max) {.state = state, .prev = prev};
@@ -196,6 +214,24 @@ void max_free(Max *max)
         state_free(&max->state);
         free(max);
     }
+}
+Max* max_add(Max* max, State* state)
+{
+    if (max) {
+        if (state->value > max->state.value) {
+            max_free(max);
+            max = (void*)0;
+        } else if (state->value == max->state.value) {
+            for (Max* ptr_max = max; ptr_max; ptr_max = ptr_max->prev) {
+                if (state_vertices_equals(state, &ptr_max->state)) {
+                    return max;
+                }
+            }
+        } else {
+            return max;
+        }
+    }
+    return max_new(state_copy(state), max);
 }
 Max* MAX = 0;
 
@@ -327,15 +363,9 @@ void solve(State *state)
 {
     #pragma omp critical
     {
-        if (state->idx > -1
-                && state->edges[state->idx] == 1 // Previous state added an edge.
-                && (!MAX || state->value >= MAX->state.value)
+        if ((!MAX || state->value >= MAX->state.value)
                 && is_connected(state->edges)) {
-            if (MAX && state->value > MAX->state.value) {
-                max_free(MAX);
-                MAX = (void*)0;
-            }
-            MAX = max_new(state_copy(state), MAX);
+            MAX = max_add(MAX, state);
         }
     }
 
@@ -390,24 +420,22 @@ void solve(State *state)
     }
 }
 
-void send_edges_to_workers(bool available_processes[], size_t process_count)
+void send_edges_to_workers(int process_count)
 {
-    for (size_t process_id = 1; process_id < process_count; process_id++) {
-        if (available_processes[process_id]) {
-            MPI_Send(&VERTEX_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
-            MPI_Send(&EDGE_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
-            for (int i = 0; i < EDGE_COUNT; i++) {
-                size_t length = sizeof(Edge);
-                int pos = 0;
-                char buffer[length];
-                MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
-                MPI_Send(buffer, pos, MPI_PACKED, process_id, TAG_WORK, MPI_COMM_WORLD);
-            }
-            MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
-            MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+    for (int process_id = 1; process_id < process_count; process_id++) {
+        MPI_Send(&VERTEX_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+        MPI_Send(&EDGE_COUNT, 1, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+        for (int i = 0; i < EDGE_COUNT; i++) {
+            size_t length = sizeof(Edge);
+            int pos = 0;
+            char buffer[length];
+            MPI_Pack(&EDGES[i].begin, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+            MPI_Pack(&EDGES[i].end, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+            MPI_Pack(&EDGES[i].value, 1, MPI_INT, buffer, length, &pos, MPI_COMM_WORLD);
+            MPI_Send(buffer, pos, MPI_PACKED, process_id, TAG_WORK, MPI_COMM_WORLD);
         }
+        MPI_Send(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
+        MPI_Send(VALUE_LEFT, EDGE_COUNT, MPI_INT, process_id, TAG_WORK, MPI_COMM_WORLD);
     }
 }
 bool receive_edges_from_boss()
@@ -437,6 +465,15 @@ bool receive_edges_from_boss()
     return true;
 }
 
+int get_worker_with_job_done()
+{
+    State state = state_new();
+    MPI_Status status = state_mpi_recieve(&state, MPI_ANY_SOURCE, TAG_DONE);
+    MAX = max_add(MAX, &state);
+    state_free(&state);
+    return status.MPI_SOURCE;
+}
+
 void clean_up()
 {
     max_free(MAX);
@@ -459,19 +496,14 @@ int main(int argc, char **argv)
         make_edges();
         free(GRAPH);
         if (! is_bipartite()) {
-            bool* available_processes = malloc(process_count * sizeof(*available_processes));
-            for (int idx = 0; idx < process_count; idx++) {
-                available_processes[idx] = true;
-            }
-            send_edges_to_workers(available_processes, process_count);
+            send_edges_to_workers(process_count);
 
             State state = state_new();
-            state.vertices[0] = 0;
             States states = states_generate(&state);
             #pragma omp parallel for schedule(dynamic) shared(MAX)
             for (int idx = states.first; idx < states.first + states.count; idx++) {
-                int process_id = 1;
-                state_mpi_send(&states.arr[idx], process_id);
+                int destination = get_worker_with_job_done();
+                state_mpi_send(&states.arr[idx], destination, TAG_WORK);
                 state_free(&states.arr[idx]);
             }
             free(states.arr);
@@ -480,19 +512,14 @@ int main(int argc, char **argv)
                 MPI_Send((void*)0, 0, MPI_PACKED, process_id, TAG_TERMINATE, MPI_COMM_WORLD);
             }
 
-            MPI_Status status;
-            int value;
-            while (true) {
-                MPI_Recv(&value, 1, MPI_INT, 1, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
-                if (status.MPI_TAG == TAG_TERMINATE) {
-                    printf("%d\n", value);
-                    break;
-                }
-                printf("%d ", value);
+            for (Max *ptr = MAX; ptr; ptr = ptr->prev) {
+                printf("%d%s", ptr->state.value, (ptr->prev)? " ": "\n");
             }
             clean_up();
         } else {
-            MPI_Send((void*)0, 0, MPI_INT, 1, TAG_TERMINATE, MPI_COMM_WORLD);
+            for (int process_id = 1; process_id < process_count; process_id++) {
+                MPI_Send((void*)0, 0, MPI_INT, process_id, TAG_TERMINATE, MPI_COMM_WORLD);
+            }
             int* edges = malloc(EDGE_COUNT * sizeof(*edges));
             int max = 0;
             for (int idx = 0; idx < EDGE_COUNT; idx++) {
@@ -505,16 +532,13 @@ int main(int argc, char **argv)
 
     } else { // Worker Process
         if (receive_edges_from_boss()) {
+            state_mpi_send((void*)0, BOSS, TAG_DONE);
             State state = state_new();
-            while (state_mpi_recieve(&state)) {
+            while (state_mpi_recieve(&state, BOSS, MPI_ANY_TAG).MPI_TAG != TAG_TERMINATE) {
                 solve(&state);
+                state_mpi_send((MAX)? &MAX->state: (void*)0, BOSS, TAG_DONE);
             }
             state_free(&state);
-
-            for (Max *ptr = MAX; ptr; ptr = ptr->prev) {
-                int tag = (ptr->prev)? TAG_WORK: TAG_TERMINATE;
-                MPI_Send(&ptr->state.value, 1, MPI_INT, 0, tag, MPI_COMM_WORLD);
-            }
             clean_up();
         }
     }
