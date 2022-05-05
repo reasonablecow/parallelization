@@ -54,7 +54,7 @@ void state_free(State *state)
     free(state->edges);
     free(state->vertices);
 }
-State state_copy(State *state)
+State state_copy(State* state)
 {
     int *vertices = malloc(VERTEX_COUNT * sizeof(*vertices));
     for (int i = 0; i < VERTEX_COUNT; i++) vertices[i] = state->vertices[i];
@@ -94,7 +94,7 @@ bool state_vertices_equals(State* first, State* second)
     }
     return true;
 }
-MPI_Status state_mpi_recieve(State* state, int source, int tag)
+MPI_Status state_mpi_receive(State* state, int source, int tag)
 {
     int length = (1 + 1 + VERTEX_COUNT + EDGE_COUNT) * sizeof(int);
     int position = 0;
@@ -151,7 +151,8 @@ void states_add_state(States *states, State *state) {
 States states_generate(State *state)
 {
     States states = states_new();
-    states_add_state(&states, state);
+    State copy = state_copy(state);
+    states_add_state(&states, &copy);
 
     while (states.arr[states.first].idx < MAX_PARALLEL_DEPTH) {
         state = &states.arr[states.first];
@@ -451,11 +452,12 @@ bool receive_edges_from_boss()
     for (int i = 0; i < EDGE_COUNT; i++) {
         size_t length = sizeof(Edge);
         int pos = 0;
-        char buffer[length];
+        char* buffer = malloc(length * sizeof(*buffer));
         MPI_Recv(buffer, length, MPI_PACKED, BOSS, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
         MPI_Unpack(buffer, length, &pos, &EDGES[i].begin, 1, MPI_INT, MPI_COMM_WORLD);
         MPI_Unpack(buffer, length, &pos, &EDGES[i].end, 1, MPI_INT, MPI_COMM_WORLD);
         MPI_Unpack(buffer, length, &pos, &EDGES[i].value, 1, MPI_INT, MPI_COMM_WORLD);
+        free(buffer);
     }
     EDGE_INDICES = malloc(VERTEX_COUNT * VERTEX_COUNT * sizeof(*EDGE_INDICES));
     MPI_Recv(EDGE_INDICES, VERTEX_COUNT * VERTEX_COUNT, MPI_INT, 0, MPI_ANY_TAG, MPI_COMM_WORLD, &status);
@@ -468,7 +470,7 @@ bool receive_edges_from_boss()
 int get_worker_with_job_done()
 {
     State state = state_new();
-    MPI_Status status = state_mpi_recieve(&state, MPI_ANY_SOURCE, TAG_DONE);
+    MPI_Status status = state_mpi_receive(&state, MPI_ANY_SOURCE, TAG_DONE);
     MAX = max_add(MAX, &state);
     state_free(&state);
     return status.MPI_SOURCE;
@@ -490,23 +492,24 @@ int main(int argc, char **argv)
     MPI_Init((void*)0, (void*)0);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &process_count);
-
     if (rank == 0) { // Boss Process
         graph_read(argv[1]);
         make_edges();
         free(GRAPH);
+        double start = MPI_Wtime();
+
         if (! is_bipartite()) {
             send_edges_to_workers(process_count);
 
             State state = state_new();
             States states = states_generate(&state);
-            #pragma omp parallel for schedule(dynamic) shared(MAX)
             for (int idx = states.first; idx < states.first + states.count; idx++) {
                 int destination = get_worker_with_job_done();
                 state_mpi_send(&states.arr[idx], destination, TAG_WORK);
                 state_free(&states.arr[idx]);
             }
             free(states.arr);
+            state_free(&state);
 
             for (int process_id = 1; process_id < process_count; process_id++) {
                 MPI_Send((void*)0, 0, MPI_PACKED, process_id, TAG_TERMINATE, MPI_COMM_WORLD);
@@ -529,13 +532,23 @@ int main(int argc, char **argv)
             printf("%d\n", is_connected(edges)? max: 0);
             free(edges);
         }
+        double elapsed = MPI_Wtime() - start;
+        fprintf(stderr, "%f\n", elapsed);
 
     } else { // Worker Process
         if (receive_edges_from_boss()) {
             state_mpi_send((void*)0, BOSS, TAG_DONE);
             State state = state_new();
-            while (state_mpi_recieve(&state, BOSS, MPI_ANY_TAG).MPI_TAG != TAG_TERMINATE) {
-                solve(&state);
+            while (state_mpi_receive(&state, BOSS, MPI_ANY_TAG).MPI_TAG != TAG_TERMINATE) {
+
+                States states = states_generate(&state);
+                #pragma omp parallel for schedule(dynamic) shared(MAX)
+                for (int idx = states.first; idx < states.first + states.count; idx++) {
+                    solve(&states.arr[idx]);
+                    state_free(&states.arr[idx]);
+                }
+                free(states.arr);
+
                 state_mpi_send((MAX)? &MAX->state: (void*)0, BOSS, TAG_DONE);
             }
             state_free(&state);
