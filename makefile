@@ -31,7 +31,7 @@ test_all:	test_sequential \
 test_sequential:		sequential
 	./test.sh ./sequential
 test_sequential_o3:		sequential_o3
-	OMP_NUM_THREADS=8 ./test.sh ./sequential_o3
+	./test.sh ./sequential_o3
 test_parallel_task:		parallel_task
 	OMP_NUM_THREADS=8 ./test.sh ./parallel_task
 test_parallel_task_o3:		parallel_task_o3

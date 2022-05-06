@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
-#define MAX_PARALLEL_DEPTH 5
+#define PARALLEL_DEPTH 10
 
 typedef struct {
   int value;
@@ -236,12 +237,15 @@ void solve(State *state)
     State state_0_1 = state_copy(state);
     State state_1_0 = state_copy(state);
     State state_no = state_copy(state);
-    bool worth_fork = state->idx < MAX_PARALLEL_DEPTH;
+
+    #ifdef _OPENMP
+    bool faster_in_parallel = state->idx < PARALLEL_DEPTH;
+    #endif
 
     // add 0-1
     if (state->vertices[vertex_begin] != 1
             && state->vertices[vertex_end] != 0) {
-        #pragma omp task if (worth_fork)
+        #pragma omp task if (faster_in_parallel)
         {
             state_0_1.vertices[vertex_begin] = 0;
             state_0_1.vertices[vertex_end] = 1;
@@ -254,7 +258,7 @@ void solve(State *state)
     // add 1-0
     if (state->vertices[vertex_begin] != 0
             && state->vertices[vertex_end] != 1) {
-        #pragma omp task if (worth_fork)
+        #pragma omp task if (faster_in_parallel)
         {
             state_1_0.vertices[vertex_begin] = 1;
             state_1_0.vertices[vertex_end] = 0;
@@ -265,7 +269,7 @@ void solve(State *state)
     }
 
     // does not add
-    #pragma omp task if (worth_fork)
+    #pragma omp task if (faster_in_parallel)
     {
         solve(&state_no);
     }
@@ -293,6 +297,10 @@ int main(int argc, char **argv)
     graph_read(argv[1]);
     // graph_print();
     make_edges();
+
+    struct timeval begin;
+    gettimeofday(&begin, 0);
+
     if (! is_bipartite()) {
         State state = state_new();
         state.vertices[0] = 0;
@@ -310,6 +318,12 @@ int main(int argc, char **argv)
     for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
         printf("%d%s", ptr->state.value, (ptr->prev != NULL)? " ": "\n");
     }
+
+    struct timeval end;
+    gettimeofday(&end, 0);
+    double elapsed = ((end.tv_sec - begin.tv_sec)
+                      + (end.tv_usec - begin.tv_usec)*1e-6);
+    fprintf(stderr, "%f\n", elapsed);
     clean_up();
     return EXIT_SUCCESS;
 }

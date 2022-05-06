@@ -1,8 +1,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
-#define MAX_PARALLEL_DEPTH 5
+#define PARALLEL_DEPTH 10
 
 typedef struct {
   int value;
@@ -86,7 +87,8 @@ States states_generate(State *state)
     States states = states_new();
     states_add_state(&states, state);
 
-    while (states.arr[states.first].idx < 5) {
+    // Initial state has .idx = -1, that is why the + 1 here.
+    while (states.arr[states.first].idx + 1 < PARALLEL_DEPTH) {
         states.count--;
         state = &states.arr[states.first++];
         if (! state_incrementable(state)) {
@@ -359,6 +361,10 @@ int main(int argc, char **argv)
     graph_read(argv[1]);
     // graph_print();
     make_edges();
+
+    struct timeval begin;
+    gettimeofday(&begin, 0);
+
     if (! is_bipartite()) {
         State state = state_new();
         state.vertices[0] = 0;
@@ -375,6 +381,12 @@ int main(int argc, char **argv)
     for (Max *ptr = MAX; ptr != NULL; ptr = ptr->prev) {
         printf("%d%s", ptr->state.value, (ptr->prev != NULL)? " ": "\n");
     }
+
+    struct timeval end;
+    gettimeofday(&end, 0);
+    double elapsed = ((end.tv_sec - begin.tv_sec)
+                      + (end.tv_usec - begin.tv_usec)*1e-6);
+    fprintf(stderr, "%f\n", elapsed);
     clean_up();
     return EXIT_SUCCESS;
 }
