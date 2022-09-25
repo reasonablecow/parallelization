@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <mpi.h>
 
-#define MAX_PARALLEL_DEPTH 5
+#define MAX_PARALLEL_DEPTH 8
 #define BOSS 0
 #define TAG_WORK 1
 #define TAG_DONE 2

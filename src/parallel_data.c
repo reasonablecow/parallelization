@@ -3,7 +3,7 @@
 #include <stdbool.h>
 #include <sys/time.h>
 
-#define PARALLEL_DEPTH 10
+#define PARALLEL_DEPTH 8
 
 typedef struct {
   int value;
